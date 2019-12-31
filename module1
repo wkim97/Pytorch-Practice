@@ -1,6 +1,11 @@
 from __future__ import print_function
 import torch
+import numpy as np
 
+#################################
+# Basic torch operations
+#################################
+# Creating basic torch
 a = torch.empty(5, 3)
 # print(a)
 b = torch.rand(5, 3)
@@ -12,14 +17,38 @@ d = torch.tensor([5.5, 3])
 e = d.new_ones(5, 3, dtype=torch.double)
 # print(e)
 # print(e.size())
+
+# Basic torch operations
 result = torch.empty(5, 3)
 torch.add(b, c, out=result)
 # print(result)
 f = result[:, -1]
 # print(x)
+
+# Basic torch orientations
 g = torch.randn(4, 4)
 h = g.view(16)
 i = g.view(-1, 8)
-print(g, g.size())
-print(h, h.size())
-print(i, i.size())
+# print(g, g.size())
+# print(h, h.size())
+# print(i, i.size())
+
+#################################
+# Basic numpy operations
+#################################
+# From torch to numpy
+a = torch.ones(5)
+# print(a)
+b = a.numpy()
+# print(b)
+a.add_(1)
+# print(a)
+# print(b)
+
+# From numpy to torch
+c = np.ones(5)
+d = torch.from_numpy(c)
+np.add(c, 1, out=c)
+# print(c)
+# print(d)
+
