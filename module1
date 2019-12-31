@@ -1,0 +1,19 @@
+from __future__ import print_function
+import torch
+
+a = torch.empty(5, 3)
+# print(a)
+b = torch.rand(5, 3)
+print(b)
+c = torch.zeros(5, 3, dtype=torch.float)
+print(c)
+d = torch.tensor([5.5, 3])
+# print(d)
+e = d.new_ones(5, 3, dtype=torch.double)
+# print(e)
+# print(e.size())
+result = torch.empty(5, 3)
+torch.add(b, c, out=result)
+print(result)
+result.add_(b)
+print(result)
