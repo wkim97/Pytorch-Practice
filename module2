@@ -1,0 +1,56 @@
+import torch
+
+#############################
+# Autograd
+# Used to calculate Jacobian of a matrix
+#############################
+# grad_fn = 각각의 tensor를 생성한 Function
+# grad_fn을 이용하여 더 깔끔한 코드를 짜고 손쉽게 디버깅을 할 수 있다
+x = torch.ones(2, 2, requires_grad=True) # [1, 1; 1, 1]
+print(x)
+print(x.grad_fn)
+y = x + 2
+print(y) # [3, 3; 3, 3]
+print(y.grad_fn)
+z = y * y * 3
+print(z) # [27, 27; 27, 27]
+print(z.grad_fn)
+out = z.mean()
+print(out) # 27
+print(out.grad_fn)
+
+# Changing grad_fn
+a = torch.randn(2, 2)
+a = ((a * 3) / (a - 1))
+print(a)
+print(a.requires_grad)
+a.requires_grad_(True) # Changes requires_grad to True
+print(a.requires_grad)
+b = (a * a).sum()
+print(b)
+print(b.grad_fn)
+
+# Gradient
+# var = torch.tensor([[1, 1], [1, 1]], dtype=torch.float)
+# z.backward(var)
+out.backward()
+print(x.grad) # d(out)/dx = d(out)/dz * dz/dx
+# z = 3(x+2)^2, out = 1/4*sum(z_i)
+# d(out)/dx = 3/2*(x+2) = 9/2 (b/c x = 1)
+# dz/dx = 6*(x+2) = 18
+
+# Jacobian using gradient example
+x = torch.randn(3, requires_grad=True)
+y = x * 2
+while y.data.norm() < 1000:
+    y = y * 2 # y = 2^10*x
+print(y)
+v = torch.tensor([0.1, 1.0, 0.0001], dtype=torch.float)
+y.backward(v)
+print(x.grad) # dy/dx prints out [102.4, 1024, 0.1024]
+
+# no_grad feature
+print(x.requires_grad)
+print((x ** 2).requires_grad)
+with torch.no_grad():
+    print((x ** 2).requires_grad)
