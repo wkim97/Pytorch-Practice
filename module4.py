@@ -1,6 +1,11 @@
 import torch
 import torchvision
 import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
+import numpy as np
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
 
 ##############################################################################
 # Learning a Classifier
@@ -27,10 +32,54 @@ trainset = torchvision.datasets.CIFAR10(
     root='./data', train=True, download=True, transform=transform)
 # 이미지용 데이터 변환기 data transformer
 trainloader = torch.utils.data.DataLoader(
-    trainset, batch_size=4, shuffle=True, num_workers=2)
+    trainset, batch_size=4, shuffle=True, num_workers=0)
 testset = torchvision.datasets.CIFAR10(
     root='./data', train=False, download=True, transform=transform)
 testloader = torch.utils.data.DataLoader(
-    testset, batch_size=4, shuffle=False, num_workers=2)
+    testset, batch_size=4, shuffle=False, num_workers=0)
 classes = ('airplane', 'automobile', 'bird', 'cat', 'deer', 'dog',
            'frog', 'horse', 'ship', 'truck')
+# Function to plot image
+def imshow(img):
+    img = img / 2 + 0.5
+    npimg = img.numpy()
+    plt.imshow(np.transpose(npimg, (1, 2, 0)))
+    plt.show()
+# Get random training image
+dataiter = iter(trainloader)
+images, labels = dataiter.next()
+# Show image and label
+imshow(torchvision.utils.make_grid(images))
+print(' '.join('%5s' % classes[labels[j]] for j in range(4)))
+
+#############################################################################
+# 2. Defining Convolutional Neural Network
+# Fix CNN to take care of 3 channels per image
+#############################################################################
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        # input 3 channel, output 6 channel, 5 x 5 kernel
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        # pooling with kernel 2 x 2
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 5 * 5)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
+net = Net()
+
+#############################################################################
+# 3. Defining loss functions and optimizer
+# Use cross-entropy loss and stochastic gradient descent with momentum
+#############################################################################
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
