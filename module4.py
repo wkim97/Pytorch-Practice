@@ -37,8 +37,8 @@ testset = torchvision.datasets.CIFAR10(
     root='./data', train=False, download=True, transform=transform)
 testloader = torch.utils.data.DataLoader(
     testset, batch_size=4, shuffle=False, num_workers=0)
-classes = ('airplane', 'automobile', 'bird', 'cat', 'deer', 'dog',
-           'frog', 'horse', 'ship', 'truck')
+classes = ('plane', 'car', 'bird', 'cat',
+           'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 # Function to plot image
 def imshow(img):
     img = img / 2 + 0.5
@@ -46,11 +46,13 @@ def imshow(img):
     plt.imshow(np.transpose(npimg, (1, 2, 0)))
     plt.show()
 # Get random training image
-dataiter = iter(trainloader)
-images, labels = dataiter.next()
-# Show image and label
-imshow(torchvision.utils.make_grid(images))
-print(' '.join('%5s' % classes[labels[j]] for j in range(4)))
+# dataiter = iter(trainloader)
+# images, labels = dataiter.next()
+# # Show image and label
+# imshow(torchvision.utils.make_grid(images))
+# # Below format is to get classification label as
+# # tensor([num1, num2, num3, num4])
+# print(' '.join('%5s' % classes[labels[j]] for j in range(4)))
 
 #############################################################################
 # 2. Defining Convolutional Neural Network
@@ -108,4 +110,50 @@ for epoch in range(2): # repeat training multiple (2) times
 print('Finished Training')
 PATH = './cifar_net.pth'
 torch.save(net.state_dict(), PATH)
+
+#############################################################################
+# 5. Testing with test data
+#############################################################################
+# dataiter = iter(testloader)
+# images, labels = dataiter.next()
+# imshow(torchvision.utils.make_grid(images))
+# print('GroundTruth: ', ' '.join('%5s' % classes[labels[j]] for j in range(4)))
+
+# Load the trained model
+net = Net()
+net.load_state_dict(torch.load(PATH))
+# outputs for test images
+correct = 0
+total = 0
+class_correct = list(0. for i in range(10))
+class_total = list(0. for i in range(10))
+with torch.no_grad():
+    for data in testloader:
+        images, labels = data
+        outputs = net(images)
+        # Get predicted labels
+        _, predicted = torch.max(outputs.data, 1)
+        # Size of labels == batch_size of testloader
+        total += labels.size(0)
+        # Number of correct labels in the batch
+        # (predicted == labels) array element is 1 if correct, 0 if incorrect
+        correct += (predicted == labels).sum().item()
+        # Array of indices of correct labels
+        c = (predicted == labels).squeeze()
+        for i in range(4):
+            # label = 0~9 (10 labels)
+            label = labels[i]
+            # Add 1 (if correct) or 0 (if incorrect)
+            # to 'label' index of class_correct array
+            class_correct[label] += c[i].item()
+            # Add 1 to 'label' index of class_total array
+            class_total[label] += 1
+print('Accuracy of the network on the 10000 test images: %d %%'
+      % (100 * correct / total))
+for i in range(10):
+    print('Accuracy of %5s: %2d %%'
+          % (classes[i], 100 * class_correct[i] / class_total[i]))
+
+
+
 
