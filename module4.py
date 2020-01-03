@@ -83,3 +83,29 @@ net = Net()
 #############################################################################
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+
+#############################################################################
+# 4. Learn the model by taking training data as input repeatedly
+#############################################################################
+for epoch in range(2): # repeat training multiple (2) times
+    running_loss = 0.0
+    for i, data in enumerate(trainloader, 0):
+        # data = [inputs, labels]
+        inputs, labels = data
+        # change gradient to 0
+        optimizer.zero_grad()
+        # 순전파 + 역전파 + 최적화
+        outputs = net(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        # prints out stats
+        running_loss += loss.item()
+        if i % 2000 == 1999:
+            print('[%d, %5d] loss: %.3f' %
+                  (epoch + 1, i + 1, running_loss / 2000))
+            running_loss = 0.0
+print('Finished Training')
+PATH = './cifar_net.pth'
+torch.save(net.state_dict(), PATH)
+
