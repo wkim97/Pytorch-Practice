@@ -15,9 +15,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from IPython.display import HTML
+from torch.autograd import Variable
 
-num_epochs = 100
+num_epochs = 50
 train_hist = {}
+b_size = 60
 
 #############################################################################################################
 # Call in data
@@ -28,7 +30,7 @@ transform = transforms.Compose([
 ])
 
 datasets = dset.MNIST(root='./data/MNIST', download=True, transform=transform)
-dataloader = torch.utils.data.DataLoader(mnist, datasets, batch_size=60, shuffle=True)
+dataloader = torch.utils.data.DataLoader(datasets, batch_size=b_size, shuffle=True)
 
 use_gpu = False
 if torch.cuda.is_available():
@@ -44,42 +46,51 @@ if leave_log:
 #############################################################################################################
 class Generator(nn.Module):
     def __init__(self):
-        super(Generator, self).__init__()
+        super().__init__()
         self.main = nn.Sequential(
             nn.Linear(in_features=100, out_features=256),
             nn.LeakyReLU(0.2, inplace=True),
+
             nn.Linear(in_features=256, out_features=512),
             nn.LeakyReLU(0.2, inplace=True),
+
             nn.Linear(in_features=512, out_features=1024),
             nn.LeakyReLU(0.2, inplace=True),
+
             nn.Linear(in_features=1024, out_features=28 * 28),
             nn.Tanh())
 
-    def forward(self, inputs):
-        return self.main(inputs).view(-1, 1, 28, 28)
+    def forward(self, input):
+        input = input.view(input.size(0), 100)
+        out = self.main(input).cuda()
+        return out
 
 #############################################################################################################
 # Discriminator
 #############################################################################################################
 class Discriminator(nn.Module):
     def __init__(self):
-        super(Generator, self).__init__()
-        self.main = nn.Sequential(
+        super().__init__()
+        self.model = nn.Sequential(
             nn.Linear(in_features=28 * 28, out_features=1024),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout(inplace=True),
+            nn.Dropout(0.3),
+
             nn.Linear(in_features=1024, out_features=512),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout(inplace=True),
+            nn.Dropout(0.3),
+
             nn.Linear(in_features=512, out_features=256),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout(inplace=True),
+            nn.Dropout(0.3),
+
             nn.Linear(in_features=256, out_features=1),
             nn.Sigmoid())
 
-    def forward(self, inputs):
-        inputs = inputs.view(-1, 28 * 28)
-        return self.main(inputs)
+    def forward(self, input):
+        out = self.model(input.view(input.size(0), 784))
+        out = out.view(out.size(0), -1)
+        return out.cuda()
 
 G = Generator()
 D = Discriminator()
@@ -91,8 +102,8 @@ if use_gpu:
 # Criterion and optimizer
 #############################################################################################################
 criterion = nn.BCELoss()
-G_optimizer = optim.Adam(G.parameters((), lr=0.0002, betas=(0.5, 0.999)))
-D_optimizer = optim.Adam(D.parameters((), lr=0.0002, betas=(0.5, 0.999)))
+G_optimizer = optim.Adam(G.parameters(), lr=0.0002, betas=(0.5, 0.999))
+D_optimizer = optim.Adam(D.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
 #############################################################################################################
 # Visualizing results
@@ -119,57 +130,76 @@ if leave_log:
     train_hist['G_losses'] = []
     generated_images = []
 
-z_fixed = Variable(torch.randn(5 * 5, 100), volatile=True)
+z_fixed = Variable(torch.randn(5 * 5, 100))
 if use_gpu:
     z_fixed = z_fixed.cuda()
+
+img_list = []
+G_losses = []
+D_losses = []
+iters = 0
 
 for epoch in range(num_epochs):
     if leave_log:
         D_losses = []
         G_losses = []
-
-    for real_data, _ in dataloader:
+    for i, (real_data, _) in enumerate(dataloader):
         batch_size = real_data.size(0)
         real_data = Variable(real_data)
-        label_real = Variable(torch.ones(batch_size, 1))
-        label_fake = Variable(torch.zeros(batch_size, 1))
+        label_real = Variable(torch.ones(batch_size))
+        label_fake = Variable(torch.zeros(batch_size))
         if use_gpu:
             real_data, label_real, label_fake = real_data.cuda(), label_real.cuda(), label_fake.cuda()
-        D_x = D(real_data)
-        D_loss_real = criterion(D_x, label_real)
-
         z = Variable(torch.randn((batch_size, 100)))
         if use_gpu:
             z = z.cuda()
         fake_data = G(z)
-        D_G_z = D(fake_data)
-        D_loss_fake = criterion(D_G_z, label_fake)
-        D_loss = D_loss_real + D_loss_fake
 
         D.zero_grad()
+        real_output = D(real_data)
+        D_loss_real = criterion(real_output, label_real)
+
+        fake_output = D(fake_data)
+        D_loss_fake = criterion(fake_output, label_fake)
+        D_loss = D_loss_real + D_loss_fake
         D_loss.backward()
         D_optimizer.step()
+        D_x = real_output.mean().item()
+
         if leave_log:
-            D_losses.append(D_loss.data[0])
+            D_losses.append(D_loss.data)
 
         z = Variable(torch.randn((batch_size, 100)))
         if use_gpu:
             z = z.cuda()
         fake_data = G(z)
-        D_G_z = D(fake_data)
-        G_loss = criterion(D_G_z, label_fake)
-
+        fake_output = D(fake_data)
         G.zero_grad()
+        G_loss = criterion(fake_output, label_real)
+
         G_loss.backward()
         G_optimizer.step()
+        D_G_z = fake_output.mean().item()
         if leave_log:
-            G_lossses.append(G_loss.data[0])
+            G_losses.append(G_loss.data)
+
+        if i % 50 == 0:
+            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)):%.4f'
+                  % (epoch + 1, num_epochs, i, len(dataloader),
+                     D_loss.item(), G_loss.item(), D_x, D_G_z))
+            G_losses.append(G_loss.item())
+            D_losses.append(D_loss.item())
+            if (iters % 500 == 0) or ((epoch == num_epochs - 1) and (i == len(dataloader) - 1)):
+                with torch.no_grad():
+                    fake = G(z_fixed).detach().cpu()
+                img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+            iters += 1
 
     if leave_log:
-        true_positive_rate = (D_x > 0.5).float().mean().data[0] # Probability real image classified as real
-        true_negative_rate = (D_G_z < 0.5).float().mean().data[0] # Probability fake image classified as fake
+        true_positive_rate = (real_output > 0.5).float().mean().data # Probability real image classified as real
+        true_negative_rate = (fake_output < 0.5).float().mean().data # Probability fake image classified as fake
         base_message = ("Epoch: {epoch:<3d} D_Loss: {d_loss:<8.6} G_Loss: {g_loss:<8.6} "
-                        "True Positive Rate: {tpr:<5.1%} True Negative Rate: {tnr:<5.1%")
+                        "True Positive Rate: {tpr:<5.1%} True Negative Rate: {tnr:<5.1%}")
         message = base_message.format(
             epoch=epoch,
             d_loss=sum(D_losses)/len(D_losses),
@@ -188,7 +218,47 @@ for epoch in range(num_epochs):
 
 torch.save(G.state_dict(), "./models/gan_generator.pkl")
 torch.save(D.state_dict(), "./models/gan_discriminator.pkl")
-with open('./models/gan_train_history.pkl', 'wb') as f:
-    pickle.dump(train_hist, f)
+# with open('./models/gan_train_history.pkl', 'wb') as f:
+#     pickle.dump(train_hist, f)
 generated_image_array = [imageio.imread(generated_image) for generated_image in generated_images]
 imageio.mimsave(result_dir + '/GAN_generation.gif', generated_image_array, fps=5)
+
+#############################################################################################################
+# Plot loss graph
+#############################################################################################################
+plt.figure(figsize=(10, 5))
+plt.title("Generator and Discriminator Loss During Training")
+plt.plot(G_losses, label="Generator")
+plt.plot(D_losses, label="Discriminator")
+plt.xlabel("Iterations")
+plt.ylabel("Loss")
+plt.legend()
+plt.show()
+
+#############################################################################################################
+# Plot animation of fake images through training
+#############################################################################################################
+fig = plt.figure(figsize=(8, 8))
+plt.axis("off")
+ims = [[plt.imshow(np.transpose(i, (1, 2, 0)), animated=True)] for i in img_list]
+ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
+
+HTML(ani.to_jshtml())
+
+#############################################################################################################
+# Plot real images and fake iamges side by side
+#############################################################################################################
+real_batch = next(iter(dataloader))
+
+plt.figure(figsize=(15, 15))
+plt.subplot(1, 2, 1)
+plt.axis("off")
+plt.title("Real Images")
+plt.imshow(np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=5, normalize=True).cpu(),
+                        (1, 2, 0)))
+
+plt.subplot(1, 2, 2)
+plt.axis("off")
+plt.title("Fake Images")
+plt.imshow(np.transpose(img_list[-1], (1, 2, 0)))
+plt.show()

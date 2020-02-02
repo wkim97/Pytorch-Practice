@@ -38,7 +38,7 @@ nz = 100
 ngf = 64
 # size of features maps in discriminator
 ndf = 64
-num_epochs = 100
+num_epochs = 50
 lr = 0.0002
 beta1 = 0.5
 ngpu = torch.cuda.device_count()
