@@ -15,6 +15,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from IPython.display import HTML
+from torch.autograd import Variable
 
 manualSeed = 999
 print("Random Seed: ", manualSeed)
@@ -55,6 +56,15 @@ dataset = dset.ImageFolder(root=dataroot,
                            ]))
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=workers)
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
+
+use_gpu = False
+if torch.cuda.is_available():
+    use_gpu = True
+leave_log = True
+if leave_log:
+    result_dir = './results/DCGAN_generated_images'
+    if not os.path.isdir(result_dir):
+        os.mkdir(result_dir)
 
 real_batch = next(iter(dataloader))
 plt.figure(figsize=(8, 8))
@@ -153,17 +163,21 @@ class Discriminator(nn.Module):
         output = self.main(input)
         return output.view(-1, 1).squeeze(1)
 
-netG = Generator(ngpu).to(device)
+G = Generator(ngpu).to(device)
 if (device.type == 'cuda') and (ngpu > 2):
-    netG = nn.DataParallel(netG, list(range(ngpu)))
-netG.apply(weights_init)
-print(netG)
+    G = nn.DataParallel(G, list(range(ngpu)))
+G.apply(weights_init)
+print(G)
 
-netD = Discriminator(ngpu).to(device)
+D = Discriminator(ngpu).to(device)
 if (device.type == 'cuda') and (ngpu > 2):
-    netD = nn.DataParallel(netD, list(range(ngpu)))
-netD.apply(weights_init)
-print(netD)
+    D = nn.DataParallel(D, list(range(ngpu)))
+D.apply(weights_init)
+print(D)
+
+if use_gpu:
+    G.cuda()
+    D.cuda()
 
 #############################################################################################################
 # Loss functions and Optimizers
@@ -172,12 +186,38 @@ criterion = nn.BCELoss()
 fixed_noise = torch.randn(64, nz, 1, 1, device=device)
 real_label = 1
 fake_label = 0
-optimizerD = optim.Adam(netD.parameters(), lr=lr, betas=(beta1, 0.999))
-optimizerG = optim.Adam(netG.parameters(), lr=lr, betas=(beta1, 0.999))
+D_optimizer = optim.Adam(D.parameters(), lr=lr, betas=(beta1, 0.999))
+G_optimizer = optim.Adam(G.parameters(), lr=lr, betas=(beta1, 0.999))
+
+#############################################################################################################
+# Visualizing results
+#############################################################################################################
+def square_plot(data, path):
+    if type(data) == list:
+        data = np.concatentate(data)
+    data = (data - data.min()) / (data.max() - data.min())
+    n = int(np.ceil(np.sqrt(data.shape[0])))
+    padding = (((0, n ** 2 - data.shape[0]),
+                (0, 1), (0, 1)) + ((0, 0),) * (data.ndim - 3))
+    data = np.pad(data, padding, mode='constant', constant_values=1)
+    data = data.reshape((n, n) + data.shape[1:]).transpose((0, 2, 1, 3)
+                                                           + tuple(range(4, data.ndim + 1)))
+    data = data.reshape((n * data.shape[1], n * data.shape[3]) + data.shape[4:])
+    plt.imsave(path, data, cmap='gray')
 
 #############################################################################################################
 # Training discriminator and generator
 #############################################################################################################
+if leave_log:
+    train_hist = {}
+    train_hist['D_losses'] = []
+    train_hist['G_losses'] = []
+    generated_images = []
+
+z_fixed = Variable(torch.randn(64, nz, 1, 1, device=device))
+if use_gpu:
+    z_fixed = z_fixed.cuda()
+
 img_list = []
 G_losses = []
 D_losses = []
@@ -185,62 +225,85 @@ iters = 0
 
 print("Starting Training Loop")
 for epoch in range(num_epochs):
-    for i, data in enumerate(dataloader):
-        ########################################
-        # Update D network: maximize log(D(x)) + log(1 - D(G(z)))
-        ########################################
-        # Training with real image batch
-        netD.zero_grad()
-        real_cpu = data[0].to(device) # Real training image
-        b_size = real_cpu.size(0) # size of batch
-        label = torch.full((b_size,), real_label, device=device) # initial labels of batch_size size init. to 1
-        output = netD(real_cpu).view(-1) # forward pass real batch through D
-        errD_real = criterion(output, label) # calculate loss on all-real batch
-        errD_real.backward() # calculate gradients for D in backward pass
-        D_x = output.mean().item() # D(x), probability of x being real
+    if leave_log:
+        D_losses = []
+        G_losses = []
+    for i, (real_data, _) in enumerate(dataloader):
+        batch_size = real_data.size(0)
+        real_data = Variable(real_data)
+        label_real = Variable(torch.ones(batch_size))
+        label_fake = Variable(torch.zeros(batch_size))
+        if use_gpu:
+            real_data, label_real, label_fake = real_data.cuda(), label_real.cuda(), label_fake.cuda()
+        z = Variable(torch.randn(batch_size, nz, 1, 1, device=device))
+        if use_gpu:
+            z = z.cuda()
+        fake_data = G(z)
 
-        # Training with fake image batch
-        noise = torch.randn(b_size, nz, 1, 1, device=device) # random noise of size batch_size by nz
-        fake = netG(noise) # make fake images using random noise
-        label.fill_(fake_label) # initial labels of batch_size size init. to 0
-        output = netD(fake.detach()).view(-1) # forward pass fake batch through D
-        errD_fake = criterion(output, label) # calculate loss on all-fake batch
-        errD_fake.backward() # calculate gradients for D in backward pass
-        D_G_z1 = output.mean().item() # D(G(z)) numerator
-        errD = errD_real + errD_fake # Loss_D = discriminator loss
-        optimizerD.step()
+        D.zero_grad()
+        real_output = D(real_data)
+        D_loss_real = criterion(real_output, label_real)
 
-        ########################################
-        # Update G network: maximize log(D(G(z))) - same as minimizing log(1-D(G(z)))
-        ########################################
-        netG.zero_grad()
-        label.fill_(real_label)
-        output = netD(fake).view(-1) # forward pass on all-fake batch through D
-        errG = criterion(output, label) # calculate G's loss based on the output, loss_G = generator loss
-        errG.backward() # calculate G's gradients
-        D_G_z2 = output.mean().item() # D(G(z)) denominator
-        optimizerG.step()
+        fake_output = D(fake_data)
+        D_loss_fake = criterion(fake_output, label_fake)
+        D_loss = D_loss_real + D_loss_fake
+        D_loss.backward()
+        D_optimizer.step()
+        D_x = real_output.mean().item()
 
-        ########################################
-        # Training stats
-        ########################################
+        if leave_log:
+            D_losses.append(D_loss.data)
+
+        z = Variable(torch.randn(batch_size, nz, 1, 1, device=device))
+        if use_gpu:
+            z = z.cuda()
+        fake_data = G(z)
+        fake_output = D(fake_data)
+        G.zero_grad()
+        G_loss = criterion(fake_output, label_real)
+
+        G_loss.backward()
+        G_optimizer.step()
+        D_G_z = fake_output.mean().item()
+        if leave_log:
+            G_losses.append(G_loss.data)
+
         if i % 50 == 0:
-            print('[%d/%d][%d/%d]\tLoss-D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)):%.4f / %.4f'
+            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)):%.4f'
                   % (epoch + 1, num_epochs, i, len(dataloader),
-                     errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
-            G_losses.append(errG.item())
-            D_losses.append(errD.item())
+                     D_loss.item(), G_loss.item(), D_x, D_G_z))
+            G_losses.append(G_loss.item())
+            D_losses.append(D_loss.item())
             if (iters % 500 == 0) or ((epoch == num_epochs - 1) and (i == len(dataloader) - 1)):
                 with torch.no_grad():
-                    fake = netG(fixed_noise).detach().cpu()
+                    fake = G(z_fixed).detach().cpu()
                 img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
             iters += 1
 
+    if leave_log:
+        true_positive_rate = (real_output > 0.5).float().mean().data  # Probability real image classified as real
+        true_negative_rate = (fake_output < 0.5).float().mean().data  # Probability fake image classified as fake
+        base_message = ("Epoch: {epoch:<3d} D_Loss: {d_loss:<8.6} G_Loss: {g_loss:<8.6} "
+                        "True Positive Rate: {tpr:<5.1%} True Negative Rate: {tnr:<5.1%}")
+        message = base_message.format(
+            epoch=epoch,
+            d_loss=sum(D_losses) / len(D_losses),
+            g_loss=sum(G_losses) / len(G_losses),
+            tpr=true_positive_rate,
+            tnr=true_negative_rate)
+        print(message)
+    if leave_log:
+        fake_data_fixed = G(z_fixed)
+        image_path = result_dir + '/epoch{}.png'.format(epoch)
+        square_plot(fake_data_fixed.view(25, 28, 28).cpu().data.numpy(), path=image_path)
+        generated_images.append(image_path)
+    if leave_log:
+        train_hist['D_losses'].append(torch.mean(torch.FloatTensor(D_losses)))
+        train_hist['G_losses'].append(torch.mean(torch.FloatTensor(G_losses)))
+
 print('Finished Training')
-D_PATH = './discriminator.pth'
-G_PATH = './generator.pth'
-torch.save(netD.state_dict(), D_PATH)
-torch.save(netG.state_dict(), G_PATH)
+torch.save(G.state_dict(), "./models/dcgan_generator.pkl")
+torch.save(D.state_dict(), "./models/dcgan_discriminator.pkl")
 
 #############################################################################################################
 # Plot loss graph
